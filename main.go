@@ -15,6 +15,7 @@ import (
 	"github.com/aler9/gomavlib/pkg/dialects/common"
 	"github.com/aler9/gomavlib/pkg/msg"
 	"github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
 const systemID byte = 255
@@ -32,7 +33,8 @@ type Messages struct {
 
 type Message struct {
 	XMLName xml.Name `xml:"message"`
-	ID		string	 `xml:"id,attr"` 
+	ID		string	 `xml:"id,attr"`
+	MsgName	string	 `xml:"name,attr"` 
 	Fields 	[]Field	 `xml:"field"`
 }
 
@@ -40,6 +42,10 @@ type Field struct {
 	XMLName xml.Name `xml:"field"`
 	Name string `xml:"name,attr"`
 }
+
+type entry struct {
+	value float64 
+} 
 
 
 /* Takes a message and returns an array of strings where each element 
@@ -53,13 +59,14 @@ func parseValues(message msg.Message) []string {
 }
 
 /* Convert an array of string parameters to float so that InfluxDB can process them */
-func convertToFloats(stringValues []string) []float64 {
+func convertToFloats(stringValues []string, tmp uint32) []float64 {
 
-	 floatValues := make([]float64, len(stringValues))
+	floatValues := make([]float64, len(stringValues))
 
 	for idx := range stringValues {
 		floatVal, err := strconv.ParseFloat(stringValues[idx], 32) 
 		if err != nil {
+			fmt.Println(tmp)
 			panic(err)
 		}
 		floatValues[idx] = floatVal
@@ -68,10 +75,48 @@ func convertToFloats(stringValues []string) []float64 {
 	return floatValues
 }
 
+func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
+	
+	var parameterNames []string
+	var msgName string
 
-func writeToInflux(id int, floatValues []float32) bool {
+	for i := 0; i < len(mavlink.Messages.Messages); i++ {
+		id := mavlink.Messages.Messages[i].ID
+		msgName = mavlink.Messages.Messages[i].MsgName
+		strID, err := strconv.ParseInt(id, 10, 32)
+		if err != nil {
+			panic(err)
+		}
+		if strID == int64(msgID) {
 
-	return false
+			//TODO: improve this search algorithm
+			for j := 0; j < len(mavlink.Messages.Messages[i].Fields); j++ {
+				// fmt.Println(mavlink.Messages.Messages[i].Fields[j].Name)
+				parameterNames = append(parameterNames, mavlink.Messages.Messages[i].Fields[j].Name)
+			}
+		}
+	}
+	return parameterNames, msgName
+}
+
+//write the data of a particular message to the local influxDB 
+func writeToInflux(msgID uint32, msgName string, parameters []string, floatValues []float64, writeAPI api.WriteAPI) {
+
+	for idx := range parameters {
+		p := influxdb2.NewPointWithMeasurement(msgName).
+		AddTag("ID", fmt.Sprintf("%v", msgID)).
+		AddField(parameters[idx], floatValues[idx]).
+		SetTime(time.Now())
+		writeAPI.WritePoint(p)
+	}
+
+	// p := influxdb2.NewPoint("VFR_HUD",
+	// 	map[string]string{"ID": fmt.Sprintf("%v", msgID)},
+	// 	map[string]interface{},
+	// 	time.Now())
+
+
+	writeAPI.Flush()
 }
 
 func main() {
@@ -97,31 +142,23 @@ func main() {
 	}
 	defer node.Close()
 
+
+
+
 	mavXML, err := os.Open("common.xml")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("Successfully Opened users.xml")
 	defer mavXML.Close()
-	byteValue, _ := ioutil.ReadAll(mavXML)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	var mavlinkXML Mavlink
-
-	xml.Unmarshal(byteValue, &mavlinkXML)
-
-
-
-	for i := 0; i < len(mavlinkXML.Messages.Messages); i++ {
-		id := mavlinkXML.Messages.Messages[i].ID
-		if id == "74" {
-			for j := 0; j < len(mavlinkXML.Messages.Messages[i].Fields); j++ {
-				fmt.Println(mavlinkXML.Messages.Messages[i].Fields[j].Name)
-			}
-		}
+	byteValue, err := ioutil.ReadAll(mavXML)
+	if err != nil {
+		panic(err)
 	}
+
+	var mavlink Mavlink
+
+	xml.Unmarshal(byteValue, &mavlink)
 
 
 	for evt := range node.Events() {
@@ -137,66 +174,95 @@ func main() {
 			// }
 			// fmt.Println(string(out))
 			
-			values := parseValues(frm.Message())
+			rawValues := parseValues(frm.Message())
 
 			switch msgID {
 
 			case 1:
-			case 22:
-			case 24:
+				fallthrough
+			
+			//error with parsing 24
+			// case 24:
+			// 	fallthrough
 			case 27:
+				fallthrough
 			case 29:
+				fallthrough
 			case 30:
+				fallthrough
 			case 32:
+				fallthrough
 			case 33:
+				fallthrough
 			case 35:
+				fallthrough
 			case 36:
+				fallthrough
+			case 40:
+				fallthrough
 			case 42:
+				fallthrough
+			case 46:
+				fallthrough
+			case 62:
+				fallthrough
 			case 65:
+				fallthrough
 			case 74:		
-				floatValues := convertToFloats(values)
-
-				//make a fucntion taht takes the ID and finds the names of the parameters
-				p := influxdb2.NewPointWithMeasurement("VFR_HUD").
-					AddTag("ID", "74").
-					AddField("airspeed", floatValues[0]).
-					AddField("groundspeed", floatValues[1]).
-					AddField("heading", floatValues[2]).
-					AddField("throttle", floatValues[3]).
-					AddField("alt", floatValues[4]).
-					AddField("climb", floatValues[5]).
-					SetTime(time.Now())
-
-				writeAPI.WritePoint(p)
-				writeAPI.Flush()
-				// fmt.Printf("Wrote %v to influxDB \n", values)
+				fallthrough
+			case 77:
+				//error with 77
+				fallthrough
+			
+			//error with parsing 87
+			// case 87:
+			// 	fallthrough
 			case 116:
+				fallthrough
 			case 125:
+				fallthrough
 			case 136:
+				fallthrough
+			case 241:
+				floatValues := convertToFloats(rawValues, msgID)
+				parameters, msgName := getParameterNames(msgID, mavlink)
+				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
+
+
+			//Messages below don't work with all floats and need custom parsing
+			case 22:
+				//1st element is a char[]
+				//maybe use struct?
+				type PARAM_VALUE struct {
+					param_id 	[16]rune
+					param_value float64
+					param_type	uint8
+					param_count uint16
+					param_index uint16
+				}
 			case 147:
+				//has two arrays of integers
+			case 242:
+				//one array
+			case 253:
+				//array of chars
+
+			//Messages below aren't documented 
+			//TODO: Look into what they are 
 			case 150:
 			case 152:
 			case 163:
 			case 164:
 			case 165:
 			case 168:
+			case 174:
 			case 178:
 			case 182:
 			case 193:
-			case 241:
-			case 242:
-				
-			
 
-			
 			}
-			
-			
 		}
 	}
-
 	defer client.Close()
-
-
 }
 

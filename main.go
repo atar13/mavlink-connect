@@ -67,7 +67,7 @@ func convertToFloats(stringValues []string, tmp uint32) []float64 {
 		floatVal, err := strconv.ParseFloat(stringValues[idx], 32) 
 		if err != nil {
 			fmt.Println(tmp)
-			panic(err)
+			// panic(err)
 		}
 		floatValues[idx] = floatVal
 	}
@@ -83,17 +83,17 @@ func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
 	for i := 0; i < len(mavlink.Messages.Messages); i++ {
 		id := mavlink.Messages.Messages[i].ID
 		msgName = mavlink.Messages.Messages[i].MsgName
-		strID, err := strconv.ParseInt(id, 10, 32)
+		intID, err := strconv.ParseInt(id, 10, 32)
 		if err != nil {
 			panic(err)
 		}
-		if strID == int64(msgID) {
+		if intID == int64(msgID) {
 
 			//TODO: improve this search algorithm
 			for j := 0; j < len(mavlink.Messages.Messages[i].Fields); j++ {
-				// fmt.Println(mavlink.Messages.Messages[i].Fields[j].Name)
 				parameterNames = append(parameterNames, mavlink.Messages.Messages[i].Fields[j].Name)
 			}
+			break
 		}
 	}
 	return parameterNames, msgName
@@ -226,6 +226,7 @@ func main() {
 			case 241:
 				floatValues := convertToFloats(rawValues, msgID)
 				parameters, msgName := getParameterNames(msgID, mavlink)
+				// fmt.Println(parameters)
 				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
 
 
@@ -240,6 +241,31 @@ func main() {
 					param_count uint16
 					param_index uint16
 				}
+				parameters, msgName := getParameterNames(msgID, mavlink)
+				// fmt.Println(parameters, msgName)
+				fmt.Println(rawValues)
+				p := influxdb2.NewPointWithMeasurement(msgName).
+				AddTag("ID", fmt.Sprintf("%v", msgID)).
+				AddField(parameters[0], rawValues[0]).
+				SetTime(time.Now())
+				writeAPI.WritePoint(p)
+					
+				floatValues := convertToFloats(rawValues[1:2], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
+				for i := 1; i < len(parameters); i++ {
+					if i == 2 {
+						break
+					}
+					p := influxdb2.NewPointWithMeasurement(msgName).
+					AddTag("ID", fmt.Sprintf("%v", msgID)).
+					AddField(parameters[i], floatValues[i-1]).
+					SetTime(time.Now())
+					writeAPI.WritePoint(p)
+				}
+
+				writeAPI.Flush()
+
+
 			case 147:
 				//has two arrays of integers
 			case 242:

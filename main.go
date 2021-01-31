@@ -12,7 +12,7 @@ import (
 	"io/ioutil"
 
 	"github.com/aler9/gomavlib"
-	"github.com/aler9/gomavlib/pkg/dialects/common"
+	"github.com/aler9/gomavlib/pkg/dialects/ardupilotmega"
 	"github.com/aler9/gomavlib/pkg/msg"
 	"github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
@@ -23,7 +23,16 @@ const host string = "127.0.0.1"
 
 type Mavlink struct {
 	XMLName 	xml.Name 	`xml:"mavlink"`
+	Enums		Enums		`xml:"enums"`
 	Messages	Messages	`xml:"messages"`
+}
+
+type Enums struct {
+
+}
+
+type Enum struct {
+	
 }
 
 type Messages struct {
@@ -66,7 +75,8 @@ func convertToFloats(stringValues []string, tmp uint32) []float64 {
 	for idx := range stringValues {
 		floatVal, err := strconv.ParseFloat(stringValues[idx], 32) 
 		if err != nil {
-			fmt.Println(tmp)
+			
+			fmt.Println(idx, "Message ID", tmp, "is causing a float parsing error.")
 			// panic(err)
 		}
 		floatValues[idx] = floatVal
@@ -133,7 +143,7 @@ func main() {
 			gomavlib.EndpointTCPClient{fmt.Sprintf("%v:%v", host, "14551")},
 			// gomavlib.EndpointUDPClient{fmt.Sprintf("%v:%v", host, "14550")},
 		},
-		Dialect:     common.Dialect,
+		Dialect:     ardupilotmega.Dialect,
 		OutVersion:  gomavlib.V2, // change to V1 if you're unable to communicate with the target
 		OutSystemID: systemID,
 	})
@@ -146,19 +156,24 @@ func main() {
 
 
 	mavXML, err := os.Open("common.xml")
+	arduXML, err := os.Open("ardupilotmega.xml")
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Successfully Opened users.xml")
+	fmt.Println("Successfully Opened common.xml and ardupilotmega.xml")
 	defer mavXML.Close()
-	byteValue, err := ioutil.ReadAll(mavXML)
+	defer arduXML.Close()
+	mavByteValue, err := ioutil.ReadAll(mavXML)
+	arduPilotByteValue, err := ioutil.ReadAll(arduXML)
 	if err != nil {
 		panic(err)
 	}
 
-	var mavlink Mavlink
+	var mavlinkCommon Mavlink
+	var arduPilotMega Mavlink
 
-	xml.Unmarshal(byteValue, &mavlink)
+	xml.Unmarshal(mavByteValue, &mavlinkCommon)
+	xml.Unmarshal(arduPilotByteValue, &arduPilotMega)
 
 
 	for evt := range node.Events() {
@@ -225,25 +240,15 @@ func main() {
 				fallthrough
 			case 241:
 				floatValues := convertToFloats(rawValues, msgID)
-				parameters, msgName := getParameterNames(msgID, mavlink)
-				// fmt.Println(parameters)
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
 
 
 			//Messages below don't work with all floats and need custom parsing
 			case 22:
-				//1st element is a char[]
-				//maybe use struct?
-				type PARAM_VALUE struct {
-					param_id 	[16]rune
-					param_value float64
-					param_type	uint8
-					param_count uint16
-					param_index uint16
-				}
-				parameters, msgName := getParameterNames(msgID, mavlink)
-				// fmt.Println(parameters, msgName)
-				fmt.Println(rawValues)
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				//TODO: add param_type
 				p := influxdb2.NewPointWithMeasurement(msgName).
 				AddTag("ID", fmt.Sprintf("%v", msgID)).
 				AddField(parameters[0], rawValues[0]).
@@ -252,39 +257,112 @@ func main() {
 					
 				floatValues := convertToFloats(rawValues[1:2], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
-				for i := 1; i < len(parameters); i++ {
-					if i == 2 {
-						break
-					}
-					p := influxdb2.NewPointWithMeasurement(msgName).
-					AddTag("ID", fmt.Sprintf("%v", msgID)).
-					AddField(parameters[i], floatValues[i-1]).
-					SetTime(time.Now())
-					writeAPI.WritePoint(p)
-				}
+				// for i := 1; i < len(parameters); i++ {
+				// 	p := influxdb2.NewPointWithMeasurement(msgName).
+				// 	AddTag("ID", fmt.Sprintf("%v", msgID)).
+				// 	AddField(parameters[i], floatValues[i-1]).
+				// 	SetTime(time.Now())
+				// 	writeAPI.WritePoint(p)
+				// }
 
-				writeAPI.Flush()
+				floatParameters := parameters[1:2]
+				floatParameters = append(floatParameters, parameters[3:]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+				// writeAPI.Flush()
 
 
 			case 147:
 				//has two arrays of integers
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				fmt.Printf("%v",rawValues[1])
+				//parses array of battery voltage information for cells 1 to 10 
+				voltageStrings := rawValues[4:14]
+				for i := 0; i < len(voltageStrings); i++ {
+					label := fmt.Sprintf("voltages%v", i)
+					if i == 0 {
+						voltageStrings[i] = (voltageStrings[i])[1:]
+					} else if i == len(voltageStrings) -1 {
+						voltageStrings[i] = (voltageStrings[i])[:len(voltageStrings[i])-1]
+					} 
+					value, err := strconv.ParseFloat(voltageStrings[i], 32)
+					if err != nil {
+						fmt.Println("Error with parsing message 147")
+						break
+					}
+					p := influxdb2.NewPointWithMeasurement(msgName).
+					AddTag("ID", fmt.Sprintf("%v", msgID)).
+					AddField(label, value).
+					SetTime(time.Now())
+					writeAPI.WritePoint(p)
+				}
+
+
+				//parses array of battery voltage information for cells 11 to 14 
+				voltageExtStrings := rawValues[20:24]
+				for i := 0; i < len(voltageExtStrings); i++ {
+					label := fmt.Sprintf("voltages_ext%v", i)
+					if i == 0 {
+						voltageExtStrings[i] = (voltageExtStrings[i])[1:]
+					} else if i == len(voltageExtStrings) -1 {
+						voltageExtStrings[i] = (voltageExtStrings[i])[:len(voltageExtStrings[i])-1]
+					} 
+					value, err := strconv.ParseFloat(voltageExtStrings[i], 32)
+					if err != nil {
+						fmt.Println("Error with parsing message 147")
+						break
+					}
+					p := influxdb2.NewPointWithMeasurement(msgName).
+					AddTag("ID", fmt.Sprintf("%v", msgID)).
+					AddField(label, value).
+					SetTime(time.Now())
+					writeAPI.WritePoint(p)
+				}
+
+				
+				//parse the rest of the values normally
+				floatValues := convertToFloats(rawValues[0:1], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[3:4], msgID)...)
+				floatValues = append(floatValues, convertToFloats(rawValues[14:19], msgID)...)
+				floatValues = append(floatValues, convertToFloats(rawValues[25:], msgID)...)
+				
+				floatParameters := parameters[0:1]
+				floatParameters = append(floatParameters, parameters[3:4]...)
+				floatParameters = append(floatParameters, parameters[5:10]...)
+				floatParameters = append(floatParameters, parameters[11:12]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+				// writeAPI.Flush()
 			case 242:
 				//one array
 			case 253:
 				//array of chars
 
-			//Messages below aren't documented 
-			//TODO: Look into what they are 
+	
+			//ardupilot dialectmessages 
 			case 150:
+				fallthrough
 			case 152:
+				fallthrough
 			case 163:
+				fallthrough
 			case 164:
+				fallthrough
 			case 165:
+				fallthrough
 			case 168:
+				fallthrough
 			case 174:
+				fallthrough
 			case 178:
+				fallthrough
 			case 182:
+				fallthrough
 			case 193:
+				floatValues := convertToFloats(rawValues, msgID)
+				parameters, msgName := getParameterNames(msgID, arduPilotMega)
+				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
 
 			}
 		}

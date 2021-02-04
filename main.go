@@ -28,11 +28,20 @@ type Mavlink struct {
 }
 
 type Enums struct {
-
+	XMLName 	xml.Name 	`xml:"enums"`
+	Enum 		[]Enum 		`xml:"enum"`
 }
 
 type Enum struct {
-	
+	XMLName 	xml.Name	`xml:"enum"`
+	Entry		Entry		`xml:"entry"`
+	Name 		string 		`xml:"name,attr"`
+}
+
+type Entry struct {
+	XMLName 	xml.Name 	`xml:"entry"`
+	Value 		string 		`xml:"value,attr"`
+	Name 		string 		`xml:"name,attr"`
 }
 
 type Messages struct {
@@ -52,9 +61,7 @@ type Field struct {
 	Name string `xml:"name,attr"`
 }
 
-type entry struct {
-	value float64 
-} 
+
 
 
 /* Takes a message and returns an array of strings where each element 
@@ -85,8 +92,8 @@ func convertToFloats(stringValues []string, tmp uint32) []float64 {
 	return floatValues
 }
 
+//retreive mavlink message paramters based on the message ID and type of .xml file to look in
 func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
-	
 	var parameterNames []string
 	var msgName string
 
@@ -98,7 +105,6 @@ func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
 			panic(err)
 		}
 		if intID == int64(msgID) {
-
 			//TODO: improve this search algorithm
 			for j := 0; j < len(mavlink.Messages.Messages[i].Fields); j++ {
 				parameterNames = append(parameterNames, mavlink.Messages.Messages[i].Fields[j].Name)
@@ -119,19 +125,12 @@ func writeToInflux(msgID uint32, msgName string, parameters []string, floatValue
 		SetTime(time.Now())
 		writeAPI.WritePoint(p)
 	}
-
-	// p := influxdb2.NewPoint("VFR_HUD",
-	// 	map[string]string{"ID": fmt.Sprintf("%v", msgID)},
-	// 	map[string]interface{},
-	// 	time.Now())
-
-
 	writeAPI.Flush()
 }
 
 func main() {
 	//maybe use godotenv for this
-	const token = "7hK-vq0LuZFzXjqIQtCiAXD0BwLUWyAoen4mYhD2EO_NIcC5puPcMjjpy6syBpY9pWd6HO_JdBd2CgPMNIFoNw=="
+	const token = "-0CJSHCejCNNlgEi-0MhuWahkmNSm5GzuPCw8scyvjZNhIDYCux93ljSXoTGNbWl4-eWThnDxIYU78z082152w=="
 	const bucket = "Mavlink"
 	const org = "TritonUAS"
 
@@ -193,12 +192,9 @@ func main() {
 
 			switch msgID {
 
+			//normal cases with no arrays or enums
 			case 1:
 				fallthrough
-			
-			//error with parsing 24
-			// case 24:
-			// 	fallthrough
 			case 27:
 				fallthrough
 			case 29:
@@ -225,13 +221,6 @@ func main() {
 				fallthrough
 			case 74:		
 				fallthrough
-			case 77:
-				//error with 77
-				fallthrough
-			
-			//error with parsing 87
-			// case 87:
-			// 	fallthrough
 			case 116:
 				fallthrough
 			case 125:
@@ -248,7 +237,7 @@ func main() {
 			case 22:
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				//TODO: add param_type
+				//TODO: add param_type enum
 				p := influxdb2.NewPointWithMeasurement(msgName).
 				AddTag("ID", fmt.Sprintf("%v", msgID)).
 				AddField(parameters[0], rawValues[0]).
@@ -257,26 +246,56 @@ func main() {
 					
 				floatValues := convertToFloats(rawValues[1:2], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
-				// for i := 1; i < len(parameters); i++ {
-				// 	p := influxdb2.NewPointWithMeasurement(msgName).
-				// 	AddTag("ID", fmt.Sprintf("%v", msgID)).
-				// 	AddField(parameters[i], floatValues[i-1]).
-				// 	SetTime(time.Now())
-				// 	writeAPI.WritePoint(p)
-				// }
+
 
 				floatParameters := parameters[1:2]
 				floatParameters = append(floatParameters, parameters[3:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
-				// writeAPI.Flush()
-
-
-			case 147:
-				//has two arrays of integers
+							
+			// error with parsing 24
+			case 24:
+				//one enum value
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				fmt.Printf("%v",rawValues[1])
+				floatValues := convertToFloats(rawValues[0:1], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[2:], msgID)...)
+
+				
+				floatParameters := parameters[0:1]
+				floatParameters = append(floatParameters, parameters[2:]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+			case 77:
+				//2 enum values
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				fmt.Println(msgID)
+				floatValues := convertToFloats(rawValues[2:], msgID)
+
+				
+				floatParameters := parameters[2:]
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+				// error with parsing 87
+			case 87:
+				//two enum values
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				floatValues := convertToFloats(rawValues[0:1], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
+
+				floatParameters := parameters[0:1]
+				floatParameters = append(floatParameters, parameters[3:]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+				
+			case 147:
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				//TODO: handle enum cases for battery status
+				// fmt.Printf("%v",rawValues[1])
+
+
 				//parses array of battery voltage information for cells 1 to 10 
 				voltageStrings := rawValues[4:14]
 				for i := 0; i < len(voltageStrings); i++ {
@@ -335,9 +354,32 @@ func main() {
 
 				// writeAPI.Flush()
 			case 242:
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				fmt.Println(msgID)
 				//one array
+				floatValues := convertToFloats(rawValues[0:6], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[11:], msgID)...)
+
+				
+				floatParameters := parameters[0:6]
+				floatParameters = append(floatParameters, parameters[7:]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 			case 253:
 				//array of chars
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				fmt.Println(parameters)
+				//one array
+				floatValues := convertToFloats(rawValues[0:1], msgID)
+				floatValues = append(floatValues, convertToFloats(rawValues[51:], msgID)...)
+
+				
+				floatParameters := parameters[0:1]
+				floatParameters = append(floatParameters, parameters[2:]...)
+				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+
 
 	
 			//ardupilot dialectmessages 

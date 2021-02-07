@@ -29,12 +29,12 @@ type Mavlink struct {
 
 type Enums struct {
 	XMLName 	xml.Name 	`xml:"enums"`
-	Enum 		[]Enum 		`xml:"enum"`
+	Enums 		[]Enum 		`xml:"enum"`
 }
 
 type Enum struct {
 	XMLName 	xml.Name	`xml:"enum"`
-	Entry		Entry		`xml:"entry"`
+	Entries		[]Entry		`xml:"entry"`
 	Name 		string 		`xml:"name,attr"`
 }
 
@@ -52,13 +52,14 @@ type Messages struct {
 type Message struct {
 	XMLName xml.Name `xml:"message"`
 	ID		string	 `xml:"id,attr"`
-	MsgName	string	 `xml:"name,attr"` 
+	MsgName	string	 `xml:"name,attr"`
 	Fields 	[]Field	 `xml:"field"`
 }
 
 type Field struct {
 	XMLName xml.Name `xml:"field"`
-	Name string `xml:"name,attr"`
+	Name 	string 	 `xml:"name,attr"`
+	Enum	string 	 `xml:"enum,attr"` 
 }
 
 
@@ -97,6 +98,7 @@ func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
 	var parameterNames []string
 	var msgName string
 
+	//TODO: improve this search algorithm
 	for i := 0; i < len(mavlink.Messages.Messages); i++ {
 		id := mavlink.Messages.Messages[i].ID
 		msgName = mavlink.Messages.Messages[i].MsgName
@@ -105,7 +107,6 @@ func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
 			panic(err)
 		}
 		if intID == int64(msgID) {
-			//TODO: improve this search algorithm
 			for j := 0; j < len(mavlink.Messages.Messages[i].Fields); j++ {
 				parameterNames = append(parameterNames, mavlink.Messages.Messages[i].Fields[j].Name)
 			}
@@ -113,6 +114,53 @@ func getParameterNames(msgID uint32, mavlink Mavlink)([]string, string) {
 		}
 	}
 	return parameterNames, msgName
+}
+
+//Retrives the name of an enum type based on message ID and the index the enum appears in a field
+func getEnumTypeFromField(msgID uint32, fieldIndex int, mavlink Mavlink) string {
+
+	for i := 0; i < len(mavlink.Messages.Messages); i++ {
+		id := mavlink.Messages.Messages[i].ID
+		intID, err := strconv.ParseInt(id, 10, 32)
+		if err != nil {
+			panic(err)
+		}
+		if(intID == int64(msgID)){
+			enumType := mavlink.Messages.Messages[i].Fields[fieldIndex].Enum
+			return enumType
+		}
+	}
+	return ""
+}
+
+//Retrive the integer representation of an enum string representation
+func getIntFromEnum(msgID uint32, fieldIndex int, enumVal string, mavlink Mavlink) uint {
+	/**
+	look up msgID and get field
+	go to index of the enum,
+	get the name of the enum
+	look up enum,
+	find an enum entry with the same as the rawValue from the plane
+	get the value of that entry and return it
+	**/
+
+	enumType := getEnumTypeFromField(msgID, fieldIndex, mavlink)
+
+	for i := 0; i < len(mavlink.Enums.Enums); i++ {
+		if mavlink.Enums.Enums[i].Name == enumType {
+			for j := 0; j < len(mavlink.Enums.Enums[i].Entries); j++ {
+				if mavlink.Enums.Enums[i].Entries[j].Name == enumVal {
+					stringValue := mavlink.Enums.Enums[i].Entries[j].Value 
+					value, err := strconv.ParseUint(stringValue, 10, 32);
+					if err != nil {
+						return 999
+					}
+					return uint(value)
+				}
+			}
+		}
+	}
+	return 999
 }
 
 //write the data of a particular message to the local influxDB 
@@ -258,6 +306,15 @@ func main() {
 				//one enum value
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
+
+				fix_type := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				enumVals := []float64{fix_type}
+
+				enumNames := []string{parameters[1]}
+
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
+
+
 				floatValues := convertToFloats(rawValues[0:1], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[2:], msgID)...)
 
@@ -270,7 +327,15 @@ func main() {
 				//2 enum values
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				fmt.Println(msgID)
+				command := float64(getIntFromEnum(msgID, 0, rawValues[0], mavlinkCommon))
+				result := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				enumVals := []float64{command, result}
+
+				var enumNames []string
+				enumNames = append(enumNames, parameters[0:2]...)
+
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
+
 				floatValues := convertToFloats(rawValues[2:], msgID)
 
 				
@@ -281,6 +346,16 @@ func main() {
 			case 87:
 				//two enum values
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				coordinate_frame := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				type_mask := float64(getIntFromEnum(msgID, 2, rawValues[2], mavlinkCommon))
+				enumVals := []float64{coordinate_frame, type_mask}
+
+				var enumNames []string
+				enumNames = append(enumNames, parameters[1:3]...)
+
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
+
 
 				floatValues := convertToFloats(rawValues[0:1], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
@@ -359,7 +434,7 @@ func main() {
 				fmt.Println(msgID)
 				//one array
 				floatValues := convertToFloats(rawValues[0:6], msgID)
-				floatValues = append(floatValues, convertToFloats(rawValues[11:], msgID)...)
+				floatValues = append(floatValues, convertToFloats(rawValues[10:], msgID)...)
 
 				
 				floatParameters := parameters[0:6]
@@ -367,16 +442,20 @@ func main() {
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 			case 253:
 				//array of chars
+				//enum at index 0
+
+				//TODO figure out what do to for status text
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				fmt.Println(parameters)
+				fmt.Println("Fdsafdsfasdf")
+				fmt.Println(rawValues)
+				for i := 0; i < len(rawValues); i++ {
+					fmt.Println(rawValues[i])
+				}
 				//one array
-				floatValues := convertToFloats(rawValues[0:1], msgID)
-				floatValues = append(floatValues, convertToFloats(rawValues[51:], msgID)...)
 
-				
-				floatParameters := parameters[0:1]
-				floatParameters = append(floatParameters, parameters[2:]...)
+				floatValues := convertToFloats(rawValues[len(rawValues)-2:], msgID)
+				floatParameters := parameters[len(parameters)-2:]
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
 

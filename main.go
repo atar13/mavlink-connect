@@ -134,15 +134,7 @@ func getEnumTypeFromField(msgID uint32, fieldIndex int, mavlink Mavlink) string 
 }
 
 //Retrive the integer representation of an enum string representation
-func getIntFromEnum(msgID uint32, fieldIndex int, enumVal string, mavlink Mavlink) uint {
-	/**
-	look up msgID and get field
-	go to index of the enum,
-	get the name of the enum
-	look up enum,
-	find an enum entry with the same as the rawValue from the plane
-	get the value of that entry and return it
-	**/
+func getIntValFromEnum(msgID uint32, fieldIndex int, enumVal string, mavlink Mavlink) uint {
 
 	enumType := getEnumTypeFromField(msgID, fieldIndex, mavlink)
 
@@ -241,16 +233,28 @@ func main() {
 			switch msgID {
 
 			//normal cases with no arrays or enums
+
+			//SYS_STATUS
 			case 1:
 				fallthrough
+
+			// RAW_IMU
 			case 27:
 				fallthrough
+
+			// SCALED_PRESSURE
 			case 29:
 				fallthrough
+
+			// ATTITUDE
 			case 30:
 				fallthrough
+
+			// LOCAL_POSITION_NED
 			case 32:
 				fallthrough
+
+			
 			case 33:
 				fallthrough
 			case 35:
@@ -281,79 +285,71 @@ func main() {
 				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
 
 
-			//Messages below don't work with all floats and need custom parsing
+			//Messages below don't work with all floats and require custom parsing
+
+			//PARAM_VALUE
 			case 22:
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				//TODO: add param_type enum
-				p := influxdb2.NewPointWithMeasurement(msgName).
-				AddTag("ID", fmt.Sprintf("%v", msgID)).
-				AddField(parameters[0], rawValues[0]).
-				SetTime(time.Now())
-				writeAPI.WritePoint(p)
-					
+				//enum parser
+				paramType := float64(getIntValFromEnum(msgID, 2, rawValues[2], mavlinkCommon))
+				enumVals := []float64{paramType}
+				var enumNames []string
+				enumNames = append(enumNames, parameters[2:3]...)
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
+
+				//remaining float parsing
 				floatValues := convertToFloats(rawValues[1:2], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[3:], msgID)...)
-
-
 				floatParameters := parameters[1:2]
 				floatParameters = append(floatParameters, parameters[3:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
-							
-			// error with parsing 24
+			//GPS_RAW_INT
 			case 24:
-				//one enum value
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-
-				fix_type := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
-				enumVals := []float64{fix_type}
-
+				//enum parser
+				fixType := float64(getIntValFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				enumVals := []float64{fixType}
 				enumNames := []string{parameters[1]}
-
 				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
 
-
+				//remaining float parser
 				floatValues := convertToFloats(rawValues[0:1], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[2:], msgID)...)
-
-				
 				floatParameters := parameters[0:1]
 				floatParameters = append(floatParameters, parameters[2:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
+			//COMMAND_ACK
 			case 77:
-				//2 enum values
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				command := float64(getIntFromEnum(msgID, 0, rawValues[0], mavlinkCommon))
-				result := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				//enum parser
+				command := float64(getIntValFromEnum(msgID, 0, rawValues[0], mavlinkCommon))
+				result := float64(getIntValFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
 				enumVals := []float64{command, result}
-
 				var enumNames []string
 				enumNames = append(enumNames, parameters[0:2]...)
-
 				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
 
+				//remaining float parser
 				floatValues := convertToFloats(rawValues[2:], msgID)
-
-				
 				floatParameters := parameters[2:]
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
-				// error with parsing 87
+			//POSITION_TARGET_GLOBAL_INT
 			case 87:
 				//two enum values
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				coordinate_frame := float64(getIntFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
-				type_mask := float64(getIntFromEnum(msgID, 2, rawValues[2], mavlinkCommon))
-				enumVals := []float64{coordinate_frame, type_mask}
-
+				//enum parse and write 
+				coordinateFrame := float64(getIntValFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				typeMask := float64(getIntValFromEnum(msgID, 2, rawValues[2], mavlinkCommon))
+				enumVals := []float64{coordinateFrame, typeMask}
 				var enumNames []string
 				enumNames = append(enumNames, parameters[1:3]...)
-
 				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
 
 
@@ -364,12 +360,9 @@ func main() {
 				floatParameters = append(floatParameters, parameters[3:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 				
+			//BATTERY_STATUS
 			case 147:
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
-
-				//TODO: handle enum cases for battery status
-				// fmt.Printf("%v",rawValues[1])
-
 
 				//parses array of battery voltage information for cells 1 to 10 
 				voltageStrings := rawValues[4:14]
@@ -414,24 +407,37 @@ func main() {
 					writeAPI.WritePoint(p)
 				}
 
+				//parse the remaining enum values
+				batteryFunction := float64(getIntValFromEnum(msgID, 1, rawValues[1], mavlinkCommon))
+				batteryType := float64(getIntValFromEnum(msgID, 2, rawValues[2], mavlinkCommon))
+				chargingState := float64(getIntValFromEnum(msgID, 10, rawValues[19], mavlinkCommon))
+				batteryMode := float64(getIntValFromEnum(msgID, 12, rawValues[24], mavlinkCommon))
+				faultBitmask := float64(getIntValFromEnum(msgID, 13, rawValues[25], mavlinkCommon))
+				enumVals := []float64{batteryFunction, batteryType, chargingState, batteryMode, faultBitmask}
+				var enumNames []string
+				enumNames = append(enumNames, parameters[1:3]...)
+				enumNames = append(enumNames, parameters[10:11]...)
+				enumNames = append(enumNames, parameters[12:]...)
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
 				
 				//parse the rest of the values normally
 				floatValues := convertToFloats(rawValues[0:1], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[3:4], msgID)...)
 				floatValues = append(floatValues, convertToFloats(rawValues[14:19], msgID)...)
-				floatValues = append(floatValues, convertToFloats(rawValues[25:], msgID)...)
+				// floatValues = append(floatValues, convertToFloats(rawValues[23:24], msgID)...)
+
 				
 				floatParameters := parameters[0:1]
 				floatParameters = append(floatParameters, parameters[3:4]...)
 				floatParameters = append(floatParameters, parameters[5:10]...)
-				floatParameters = append(floatParameters, parameters[11:12]...)
+				// floatParameters = append(floatParameters, parameters[11:12]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
-				// writeAPI.Flush()
+				writeAPI.Flush()
+
 			case 242:
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				fmt.Println(msgID)
 				//one array
 				floatValues := convertToFloats(rawValues[0:6], msgID)
 				floatValues = append(floatValues, convertToFloats(rawValues[10:], msgID)...)
@@ -447,13 +453,12 @@ func main() {
 				//TODO figure out what do to for status text
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				fmt.Println("Fdsafdsfasdf")
-				fmt.Println(rawValues)
-				for i := 0; i < len(rawValues); i++ {
-					fmt.Println(rawValues[i])
-				}
-				//one array
+				// fmt.Println(rawValues)
+				// for i := 0; i < len(rawValues); i++ {
+				// 	fmt.Println(rawValues[i])
+				// }
 
+				//one array
 				floatValues := convertToFloats(rawValues[len(rawValues)-2:], msgID)
 				floatParameters := parameters[len(parameters)-2:]
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)

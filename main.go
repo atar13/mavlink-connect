@@ -21,6 +21,7 @@ import (
 const systemID byte = 255
 const host string = "127.0.0.1"
 
+//XML structs
 type Mavlink struct {
 	XMLName 	xml.Name 	`xml:"mavlink"`
 	Enums		Enums		`xml:"enums"`
@@ -157,7 +158,6 @@ func getIntValFromEnum(msgID uint32, fieldIndex int, enumVal string, mavlink Mav
 
 //write the data of a particular message to the local influxDB 
 func writeToInflux(msgID uint32, msgName string, parameters []string, floatValues []float64, writeAPI api.WriteAPI) {
-
 	for idx := range parameters {
 		p := influxdb2.NewPointWithMeasurement(msgName).
 		AddTag("ID", fmt.Sprintf("%v", msgID)).
@@ -228,6 +228,7 @@ func main() {
 			// }
 			// fmt.Println(string(out))
 			
+			//gather the raw values returned by the plane as an array of strings
 			rawValues := parseValues(frm.Message())
 
 			switch msgID {
@@ -471,27 +472,15 @@ func main() {
 
 				//one array
 				floatValues := convertToFloats(rawValues[0:6], msgID)
-				floatValues = append(floatValues, convertToFloats(rawValues[10:], msgID)...)
-
-				
+				floatValues = append(floatValues, convertToFloats(rawValues[10:], msgID)...)	
 				floatParameters := parameters[0:6]
 				floatParameters = append(floatParameters, parameters[7:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
 
 			// STATUSTEXT
 			case 253:
-				//array of chars
-				//enum at index 0
-
-				//TODO figure out what do to for status text
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
-				// fmt.Println(rawValues)
-				// for i := 0; i < len(rawValues); i++ {
-				// 	fmt.Println(rawValues[i])
-				// }
-
-				//one array
 				floatValues := convertToFloats(rawValues[len(rawValues)-2:], msgID)
 				floatParameters := parameters[len(parameters)-2:]
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
@@ -499,7 +488,7 @@ func main() {
 
 
 	
-			//ardupilot dialectmessages 
+			//ardupilot dialectmessages found in ardupilotmega.xml
 			case 150:
 				fallthrough
 			case 152:
@@ -522,7 +511,6 @@ func main() {
 				floatValues := convertToFloats(rawValues, msgID)
 				parameters, msgName := getParameterNames(msgID, arduPilotMega)
 				writeToInflux(msgID, msgName, parameters, floatValues, writeAPI)
-
 			}
 		}
 	}

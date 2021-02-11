@@ -169,8 +169,9 @@ func writeToInflux(msgID uint32, msgName string, parameters []string, floatValue
 }
 
 func main() {
-	//maybe use godotenv for this
-	const token = "-0CJSHCejCNNlgEi-0MhuWahkmNSm5GzuPCw8scyvjZNhIDYCux93ljSXoTGNbWl4-eWThnDxIYU78z082152w=="
+
+	//InfluxDB credentials
+	const token = "7hK-vq0LuZFzXjqIQtCiAXD0BwLUWyAoen4mYhD2EO_NIcC5puPcMjjpy6syBpY9pWd6HO_JdBd2CgPMNIFoNw=="
 	const bucket = "Mavlink"
 	const org = "TritonUAS"
 
@@ -191,9 +192,7 @@ func main() {
 	}
 	defer node.Close()
 
-
-
-
+	//read xml files of messages
 	mavXML, err := os.Open("common.xml")
 	arduXML, err := os.Open("ardupilotmega.xml")
 	if err != nil {
@@ -215,6 +214,7 @@ func main() {
 	xml.Unmarshal(arduPilotByteValue, &arduPilotMega)
 
 
+	//loop through incoming events
 	for evt := range node.Events() {
 		if frm, ok := evt.(*gomavlib.EventFrame); ok {
 			msgID := frm.Message().GetID()
@@ -254,31 +254,51 @@ func main() {
 			case 32:
 				fallthrough
 
-			
+			//GLOBAL_POSITION_INT
 			case 33:
 				fallthrough
+
+			//RC_CHANNELS_RAW
 			case 35:
 				fallthrough
+
+			//SERVO_OUTPUT_RAW
 			case 36:
 				fallthrough
-			case 40:
-				fallthrough
+
+			//MISSION_CURRENT
 			case 42:
 				fallthrough
+
+			//MISSION_ITEM_REACHED
 			case 46:
 				fallthrough
+
+			//NAV_CONTROLLER_OUTPUT
 			case 62:
 				fallthrough
+
+			//RC_CHANNELS
 			case 65:
 				fallthrough
+
+			//VFR_HUD
 			case 74:		
 				fallthrough
+
+			//SCALED_IMU2
 			case 116:
 				fallthrough
+			
+			//POWER_STATUS
 			case 125:
 				fallthrough
+
+			//TERRAIN_REPORT
 			case 136:
 				fallthrough
+
+			// VIBRATION
 			case 241:
 				floatValues := convertToFloats(rawValues, msgID)
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
@@ -321,6 +341,16 @@ func main() {
 				floatParameters := parameters[0:1]
 				floatParameters = append(floatParameters, parameters[2:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+			//MISSION_REQUEST
+			case 40:
+				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
+
+				//enum parser
+				missionType := float64(getIntValFromEnum(msgID, 3, rawValues[3], mavlinkCommon))
+				enumVals := []float64{missionType}
+				enumNames := []string{parameters[3]}
+				writeToInflux(msgID, msgName, enumNames, enumVals, writeAPI)
 
 			//COMMAND_ACK
 			case 77:
@@ -435,6 +465,7 @@ func main() {
 
 				writeAPI.Flush()
 
+			//HOME_POSITION
 			case 242:
 				parameters, msgName := getParameterNames(msgID, mavlinkCommon)
 
@@ -446,6 +477,8 @@ func main() {
 				floatParameters := parameters[0:6]
 				floatParameters = append(floatParameters, parameters[7:]...)
 				writeToInflux(msgID, msgName, floatParameters, floatValues, writeAPI)
+
+			// STATUSTEXT
 			case 253:
 				//array of chars
 				//enum at index 0
